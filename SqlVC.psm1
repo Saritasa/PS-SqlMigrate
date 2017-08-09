@@ -31,6 +31,10 @@ function Invoke-SQL {
     $dataSet.Tables
 }
 
+function Get-PatchHistoryTableName {
+    $FullHistoryTableName
+}
+
 function Initialize-HistoryTable {
     [CmdletBinding()]
     param(
