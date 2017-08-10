@@ -1,4 +1,4 @@
-﻿Import-Module ..\SqlVC.psm1
+﻿Import-Module ..\SqlMigrate.psm1
 
 $testDatabaseConnectionString = "Data Source=localhost; Integrated Security=SSPI; Initial Catalog=tempdb"
 $HistoryTable = Get-PatchHistoryTableName
