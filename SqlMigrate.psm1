@@ -24,7 +24,7 @@ function Set-Defaults {
         Write-Verbose "Setting used database schema to $DatabaseSchema"
         $script:DefaultSchema = $DatabaseSchema
     }
-    $script:FullHistoryTableName = "[$($script:DefaultSchema)].[$($script:HistoryTable)]"
+    $script:FullHistoryTableName = "[$script:DefaultSchema].[$script:HistoryTable]"
     Write-Verbose "Full patch history table name is $script:FullHistoryTableName"
 
     if ($DefaultCommandTimeout -ne $null)
@@ -96,7 +96,7 @@ function Invoke-SQLFromFile {
 }
 
 function Get-PatchHistoryTableName {
-    $FullHistoryTableName
+    $script:FullHistoryTableName
 }
 
 function Initialize-HistoryTable {
@@ -107,22 +107,21 @@ function Initialize-HistoryTable {
     )
 
     $TableExists = (Invoke-SQL -ConnectionString $ConnectionString `
-        -SqlCommand "Select Count(*) As [Count] From INFORMATION_SCHEMA.TABLES Where TABLE_SCHEMA = '$DefaultSchema' And TABLE_NAME = '$HistoryTable'").Count `
+        -SqlCommand "Select Count(*) As [Count] From INFORMATION_SCHEMA.TABLES Where TABLE_SCHEMA = '$script:DefaultSchema' And TABLE_NAME = '$script:HistoryTable'").Count `
             -gt 0
 
     if (!$TableExists)
     {
-        Write-Verbose "Creating table $FullHistoryTableName"
+        Write-Verbose "Creating table $script:FullHistoryTableName"
         $TableDefinitionCommand = "
-Create Table $FullHistoryTableName (
+Create Table $script:FullHistoryTableName (
     id int Not Null Identity(1, 1),
     name varchar(100) Not Null,
     applied_at Datetime2 Not Null,
-    Constraint [PK_$HistoryTable] Primary Key Clustered ( id )
+    Constraint [PK_$script:HistoryTable] Primary Key Clustered ( id )
 )"
         Invoke-SQL -ConnectionString $ConnectionString -SqlCommand $TableDefinitionCommand
     }
 }
-
 
 Set-Defaults -PatchHistoryTableName '_patch_history' -DatabaseSchema 'dbo' -DefaultCommandTimeout 60 -DataMigrationTimeout 600
