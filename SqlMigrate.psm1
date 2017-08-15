@@ -49,21 +49,18 @@ function Invoke-SQL {
         [string]$SqlCommand,
         [int]$Timeout = $script:DefaultCommandTimeout
     )
-
     $ConnectionString = "$ConnectionString;Connection Timeout=$Timeout";
     $connection = New-Object System.Data.SqlClient.SqlConnection($ConnectionString)
     $connection.Open()
     
     try
     {
-        $command = New-Object System.Data.SqlClient.SqlCommand($SqlCommand, $connection)
+        $command = $connection.CreateCommand()
+        $command.CommandText = $SqlCommand
+        $command.CommandTimeout = $Timeout
         $adapter = New-Object System.Data.SqlClient.SqlDataAdapter $command
         $dataset = New-Object System.Data.DataSet
         $adapter.Fill($dataSet) | Out-Null
-    }
-    catch
-    {
-        throw
     }
     finally
     {
@@ -77,7 +74,7 @@ function Invoke-SQLFromFile {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
-        [ValidateScript({ [System.IO.File]::Exists($_) })]
+        [ValidateScript({ [System.IO.File]::Exists((Resolve-Path $_)) })]
         [string[]]$FilePath,
         [Parameter(Mandatory = $true)]
         [string]$ConnectionString
@@ -87,11 +84,46 @@ function Invoke-SQLFromFile {
         $fileName = (Get-Item $FilePath).BaseName
         $isDataFile = $fileName.EndsWith('.dat')
         
-        $fileText = Get-Content $FilePath -Raw
+        $fileText = Get-Content $FilePath
         $commandExecutionTimeout = if ($isDataFile) { $script:DataMigrationTimeout } else { $script:DefaultCommandTimeout }
+        $batchScript = $null
+        $linePos = 0
+        $lineBlockStart = 0
         Write-Information "Executing file $FilePath"
-        Invoke-SQL -ConnectionString $ConnectionString -SqlCommand $fileText -Timeout $commandExecutionTimeout
-        Write-Information "File $FilePath executed successfully"
+        try
+        {
+            # split the file in batch commands (separated by GO statements) and run them
+            foreach ($line in $fileText)
+            {
+                if ($line -match '^\s*go\s*$')
+                {
+                    # exec
+                    Invoke-SQL -ConnectionString $ConnectionString -SqlCommand $batchScript -Timeout $commandExecutionTimeout
+                    $batchScript = $null
+                    $lineBlockStart = $linePos + 1
+                }
+                else
+                {
+                    if ($batchScript -ne $null)
+                    {
+                        $batchScript += "`n"
+                    }
+                    $batchScript += $line
+                }
+
+                ++$linePos
+            }
+            Invoke-SQL -ConnectionString $ConnectionString -SqlCommand $batchScript -Timeout $commandExecutionTimeout
+            Write-Information "File $FilePath executed successfully"
+        }
+        catch [System.Data.SqlClient.SqlException]
+        {
+            $OccurredException = $_.Exception.InnerException
+            $ExceptionLine = $lineBlockStart + $OccurredException.LineNumber
+            throw "Error executing file $($FilePath):
+            $($OccurredException.Message)
+            At line $ExceptionLine, Error Number: $($OccurredException.Number), State: $($OccurredException.State), Class: $($OccurredException.Class)"
+        }
     }
 }
 
