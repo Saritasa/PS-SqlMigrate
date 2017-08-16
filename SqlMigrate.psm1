@@ -127,6 +127,33 @@ function Invoke-SQLFromFile {
     }
 }
 
+function Invoke-MigrationsInFolder {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ConnectionString,
+        [string]$FolderPath,
+        [switch]$Recurse
+    )
+
+    Initialize-HistoryTable -ConnectionString $ConnectionString
+
+    $executedFilesCount = 0
+    Get-ChildItem $FolderPath -File -Filter *.sql -Recurse:$Recurse |
+        ForEach-Object {
+            $fileName = $_.Name
+            # todo: implement testing if file was already executed
+            $executeScript = $true
+            if ($executeScript)
+            {
+                Invoke-SQLFromFile -FilePath $_.FullName -ConnectionString $ConnectionString
+                # todo: save information about file was executed to the database
+                ++$executedFilesCount
+            }
+        }
+    Write-Information "Successfully executed $executedFilesCount migration scripts."
+}
+
 function Get-PatchHistoryTableName {
     $script:FullHistoryTableName
 }
