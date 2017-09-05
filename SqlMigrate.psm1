@@ -189,7 +189,8 @@ Create Table $script:FullHistoryTableName (
     id int Not Null Identity(1, 1),
     name varchar(100) Not Null,
     applied_at Datetime2 Not Null,
-    Constraint [PK_$script:HistoryTable] Primary Key Clustered ( id )
+    Constraint [PK_$script:HistoryTable] Primary Key Clustered ( id ),
+    Index [IX_$($script:HistoryTable)_Name] NonClustered (Name)
 )"
         Invoke-SQL -ConnectionString $ConnectionString -SqlCommand $TableDefinitionCommand
     }
