@@ -45,3 +45,39 @@ Describe "Invoke-SQLFromFile" {
         }
     }
 }
+
+Describe "Set-FileMigrated" {
+    Initialize-HistoryTable $testDatabaseConnectionString
+
+    It "should successfully set file migration status" {
+        $FileName = 'test.sql'
+        Set-FileMigrated -ConnectionString $testDatabaseConnectionString -FileName $FileName
+
+        $FileNameParameter = New-Object System.Data.SqlClient.SqlParameter
+        $FileNameParameter.ParameterName = '@FileName'
+        $FileNameParameter.Value = $FileName    
+        $res = Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Select Count(*) As [Count] From $HistoryTable Where name = @FileName" `
+            -CommandParameters $FileNameParameter
+        $res.Count | Should Be 1
+    }
+    
+    It "should not insert duplicate files" {
+        $FileName = 'test.sql'
+        Set-FileMigrated -ConnectionString $testDatabaseConnectionString -FileName $FileName
+        Set-FileMigrated -ConnectionString $testDatabaseConnectionString -FileName $FileName
+
+        $FileNameParameter = New-Object System.Data.SqlClient.SqlParameter
+        $FileNameParameter.ParameterName = '@FileName'
+        $FileNameParameter.Value = $FileName    
+        $res = Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Select Count(*) As [Count] From $HistoryTable Where name = @FileName" `
+            -CommandParameters $FileNameParameter
+        $res.Count | Should Be 1
+    }
+    
+    AfterEach {
+        # clear the patch table
+        Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Delete $HistoryTable" -ErrorAction SilentlyContinue            
+    }
+    
+    Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Drop Table $HistoryTable" -ErrorAction SilentlyContinue
+}

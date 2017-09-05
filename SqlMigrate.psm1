@@ -152,6 +152,7 @@ function Invoke-MigrationsInFolder {
             if ($executeScript)
             {
                 Invoke-SQLFromFile -FilePath $_.FullName -ConnectionString $ConnectionString
+                Set-FileMigrated -ConnectionString $ConnectionString -FileName $fileName
                 # todo: save information about file was executed to the database
                 ++$executedFilesCount
             }
@@ -161,6 +162,25 @@ function Invoke-MigrationsInFolder {
 
 function Get-PatchHistoryTableName {
     $script:FullHistoryTableName
+}
+
+function Set-FileMigrated {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ConnectionString,
+        [Parameter(Mandatory = $true)]
+        [string]$FileName
+    )
+    $InsertCommand = "
+If Not Exists (Select * From $script:FullHistoryTableName Where name = @PatchFileName)
+    Insert $script:FullHistoryTableName(name, applied_at)
+    Values (@PatchFileName, GetUTCDate())
+"
+    $PatchNameParameter = New-Object System.Data.SqlClient.SqlParameter
+    $PatchNameParameter.ParameterName = '@PatchFileName'
+    $PatchNameParameter.Value = $FileName
+    Invoke-SQL -ConnectionString $ConnectionString -SqlCommand $InsertCommand -CommandParameters $PatchNameParameter
 }
 
 function Initialize-HistoryTable {
