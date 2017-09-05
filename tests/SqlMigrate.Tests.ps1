@@ -9,20 +9,22 @@ Describe "Initialize-HistoryTable" {
         { Initialize-HistoryTable "asdf" } | Should throw
     }
 
-    It "should create an empty history table" {
-        Initialize-HistoryTable $testDatabaseConnectionString
-
-        $res = Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Select Count(*) As [Count] From $HistoryTable"
-        $res.Count | Should Be 0
-    }
-
-    It "should not fail if history table already exists" {
-        Initialize-HistoryTable $testDatabaseConnectionString
-        { Initialize-HistoryTable $testDatabaseConnectionString } | Should Not throw
-    }
-
-    AfterEach {
-        Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Drop Table $HistoryTable" -ErrorAction SilentlyContinue
+    Context "Successful table creation" {
+        It "should create an empty history table" {
+            Initialize-HistoryTable $testDatabaseConnectionString
+    
+            $res = Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Select Count(*) As [Count] From $HistoryTable"
+            $res.Count | Should Be 0
+        }
+    
+        It "should not fail if history table already exists" {
+            Initialize-HistoryTable $testDatabaseConnectionString
+            { Initialize-HistoryTable $testDatabaseConnectionString } | Should Not throw
+        }
+    
+        AfterEach {
+            Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Drop Table $HistoryTable" -ErrorAction SilentlyContinue
+        }
     }
 }
 
