@@ -47,7 +47,8 @@ function Invoke-SQL {
         [string]$ConnectionString,
         [Parameter(Mandatory = $true)]
         [string]$SqlCommand,
-        [int]$Timeout = $script:DefaultCommandTimeout
+        [int]$Timeout = $script:DefaultCommandTimeout,
+        [System.Data.SqlClient.SqlParameter[]]$CommandParameters
     )
     $ConnectionString = "$ConnectionString;Connection Timeout=$Timeout";
     $connection = New-Object System.Data.SqlClient.SqlConnection($ConnectionString)
@@ -58,6 +59,10 @@ function Invoke-SQL {
         $command = $connection.CreateCommand()
         $command.CommandText = $SqlCommand
         $command.CommandTimeout = $Timeout
+        if ($CommandParameters -and $CommandParameters.Count -gt 0)
+        {
+            $command.Parameters.AddRange($CommandParameters)
+        }
         $adapter = New-Object System.Data.SqlClient.SqlDataAdapter $command
         $dataset = New-Object System.Data.DataSet
         $adapter.Fill($dataSet) | Out-Null
@@ -165,8 +170,15 @@ function Initialize-HistoryTable {
         [string]$ConnectionString
     )
 
+    $TableSchemaParameter = New-Object System.Data.SqlClient.SqlParameter
+    $TableSchemaParameter.ParameterName = '@TableSchema'
+    $TableSchemaParameter.Value = $script:DefaultSchema
+    $TableNameParameter = New-Object System.Data.SqlClient.SqlParameter
+    $TableNameParameter.ParameterName = '@TableName'
+    $TableNameParameter.Value = $script:HistoryTable
     $TableExists = (Invoke-SQL -ConnectionString $ConnectionString `
-        -SqlCommand "Select Count(*) As [Count] From INFORMATION_SCHEMA.TABLES Where TABLE_SCHEMA = '$script:DefaultSchema' And TABLE_NAME = '$script:HistoryTable'").Count `
+        -SqlCommand "Select Count(*) As [Count] From INFORMATION_SCHEMA.TABLES Where TABLE_SCHEMA = @TableSchema And TABLE_NAME = @TableName" `
+        -CommandParameters $TableSchemaParameter, $TableNameParameter ).Count `
             -gt 0
 
     if (!$TableExists)
