@@ -147,13 +147,11 @@ function Invoke-MigrationsInFolder {
     Get-ChildItem $FolderPath -File -Filter *.sql -Recurse:$Recurse |
         ForEach-Object {
             $fileName = $_.Name
-            # todo: implement testing if file was already executed
-            $executeScript = $true
+            $executeScript = !(Test-FileMigrated -ConnectionString $ConnectionString -FileName $fileName)
             if ($executeScript)
             {
                 Invoke-SQLFromFile -FilePath $_.FullName -ConnectionString $ConnectionString
                 Set-FileMigrated -ConnectionString $ConnectionString -FileName $fileName
-                # todo: save information about file was executed to the database
                 ++$executedFilesCount
             }
         }
@@ -162,6 +160,29 @@ function Invoke-MigrationsInFolder {
 
 function Get-PatchHistoryTableName {
     $script:FullHistoryTableName
+}
+
+function Test-FileMigrated {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ConnectionString,
+        [Parameter(Mandatory = $true)]
+        [string]$FileName
+    )
+
+    $SearchCommand = "
+If Exists (Select * From $script:FullHistoryTableName Where name = @PatchFileName)
+    Select 1 As [Exists]
+Else
+    Select 0 As [Exists]
+"
+    $PatchNameParameter = New-Object System.Data.SqlClient.SqlParameter
+    $PatchNameParameter.ParameterName = '@PatchFileName'
+    $PatchNameParameter.Value = $FileName
+    $fileMigrated = 0 -lt ((Invoke-SQL -ConnectionString $ConnectionString -SqlCommand $SearchCommand -CommandParameters $PatchNameParameter).Exists)
+
+    $fileMigrated
 }
 
 function Set-FileMigrated {

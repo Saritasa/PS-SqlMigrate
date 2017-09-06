@@ -81,3 +81,31 @@ Describe "Set-FileMigrated" {
     
     Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Drop Table $HistoryTable" -ErrorAction SilentlyContinue
 }
+
+Describe "Test-FileMigrated" {
+    Initialize-HistoryTable $testDatabaseConnectionString
+    
+    It "should succsessfuly detect file was not migrated" {
+        $FileName = 'test.sql'
+        (Test-FileMigrated -ConnectionString $testDatabaseConnectionString -FileName $FileName) | Should Be $false
+    }
+
+    It "should detect the file was migrated" {
+        $FileName = 'test.sql'
+        Set-FileMigrated -ConnectionString $testDatabaseConnectionString -FileName $FileName
+        (Test-FileMigrated -ConnectionString $testDatabaseConnectionString -FileName $FileName) | Should Be $true
+    }
+    
+    It "should be case insensitive" {
+        $FileName = 'test.sql'
+        Set-FileMigrated -ConnectionString $testDatabaseConnectionString -FileName $FileName
+        (Test-FileMigrated -ConnectionString $testDatabaseConnectionString -FileName $FileName.ToUpper()) | Should Be $true
+    }
+    
+    AfterEach {
+        # clear the patch table
+        Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Delete $HistoryTable" -ErrorAction SilentlyContinue            
+    }
+    
+    Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Drop Table $HistoryTable" -ErrorAction SilentlyContinue
+}
