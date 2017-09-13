@@ -51,33 +51,45 @@ function Set-Defaults {
 function Invoke-SQL {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true, ParameterSetName = 'ConnectionString')]
         [string]$ConnectionString,
+        [Parameter(Mandatory = $true, ParameterSetName = 'OpenConnection')]
+        [Data.SqlClient.SqlConnection]$Connection,
         [Parameter(Mandatory = $true)]
         [string]$SqlCommand,
         [int]$Timeout = $script:DefaultCommandTimeout,
-        [System.Data.SqlClient.SqlParameter[]]$CommandParameters
+        [Data.SqlClient.SqlParameter[]]$CommandParameters
     )
-    $ConnectionString = "$ConnectionString;Connection Timeout=$Timeout";
-    $connection = New-Object System.Data.SqlClient.SqlConnection($ConnectionString)
-    $connection.Open()
+    if ($PSCmdlet.ParameterSetName -eq 'ConnectionString')
+    {
+        $ConnectionString = "$ConnectionString;Connection Timeout=$Timeout";
+        $Connection = New-Object Data.SqlClient.SqlConnection($ConnectionString)
+    }
     
     try
     {
-        $command = $connection.CreateCommand()
+        if ($Connection.State -ne [Data.ConnectionState]::Open)
+        {
+            $Connection.Open()
+        }
+
+        $command = $Connection.CreateCommand()
         $command.CommandText = $SqlCommand
         $command.CommandTimeout = $Timeout
         if ($CommandParameters -and $CommandParameters.Count -gt 0)
         {
             $command.Parameters.AddRange($CommandParameters)
         }
-        $adapter = New-Object System.Data.SqlClient.SqlDataAdapter $command
-        $dataset = New-Object System.Data.DataSet
+        $adapter = New-Object Data.SqlClient.SqlDataAdapter $command
+        $dataset = New-Object Data.DataSet
         $adapter.Fill($dataSet) | Out-Null
     }
     finally
     {
-        $connection.Close()
+        if ($PSCmdlet.ParameterSetName -eq 'ConnectionString')
+        {
+            $Connection.Dispose()            
+        }
     }
     
     $dataSet.Tables
@@ -87,10 +99,10 @@ function Invoke-SQLFromFile {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
-        [ValidateScript({ [System.IO.File]::Exists((Resolve-Path $_)) })]
+        [ValidateScript({ [IO.File]::Exists((Resolve-Path $_)) })]
         [string[]]$FilePath,
         [Parameter(Mandatory = $true)]
-        [string]$ConnectionString
+        [Data.SqlClient.SqlConnection]$Connection
     )
 
     Process {
@@ -111,7 +123,7 @@ function Invoke-SQLFromFile {
                 if ($line -match '^\s*' + $script:CommandTerminator + '\s*$')
                 {
                     # exec
-                    Invoke-SQL -ConnectionString $ConnectionString -SqlCommand $batchScript -Timeout $commandExecutionTimeout
+                    Invoke-SQL -Connection $Connection -SqlCommand $batchScript -Timeout $commandExecutionTimeout
                     $batchScript = $null
                     $lineBlockStart = $linePos + 1
                 }
@@ -126,10 +138,10 @@ function Invoke-SQLFromFile {
 
                 ++$linePos
             }
-            Invoke-SQL -ConnectionString $ConnectionString -SqlCommand $batchScript -Timeout $commandExecutionTimeout
+            Invoke-SQL -Connection $Connection -SqlCommand $batchScript -Timeout $commandExecutionTimeout
             Write-Information "File $FilePath executed successfully"
         }
-        catch [System.Data.SqlClient.SqlException]
+        catch [Data.SqlClient.SqlException]
         {
             $OccurredException = $_.Exception.InnerException
             $ExceptionLine = $lineBlockStart + $OccurredException.LineNumber
@@ -149,21 +161,33 @@ function Invoke-MigrationsInFolder {
         [switch]$Recurse
     )
 
-    Initialize-HistoryTable -ConnectionString $ConnectionString
-
-    $executedFilesCount = 0
-    Get-ChildItem $FolderPath -File -Filter *.sql -Recurse:$Recurse |
-        ForEach-Object {
-            $fileName = $_.Name
-            $executeScript = !(Test-FileMigrated -ConnectionString $ConnectionString -FileName $fileName)
-            if ($executeScript)
-            {
-                Invoke-SQLFromFile -FilePath $_.FullName -ConnectionString $ConnectionString
-                Set-FileMigrated -ConnectionString $ConnectionString -FileName $fileName
-                ++$executedFilesCount
+    $Connection = New-Object Data.SqlClient.SqlConnection($ConnectionString)
+    try
+    {
+        $Connection.Open()
+        Initialize-HistoryTable -Connection $Connection
+        
+        $executedFilesCount = 0
+        Get-ChildItem $FolderPath -File -Filter *.sql -Recurse:$Recurse |
+            ForEach-Object {
+                $fileName = $_.Name
+                $executeScript = !(Test-FileMigrated -Connection $Connection -FileName $fileName)
+                if ($executeScript)
+                {
+                    Invoke-SQLFromFile -FilePath $_.FullName -Connection $Connection
+                    Set-FileMigrated -Connection $Connection -FileName $fileName
+                    ++$executedFilesCount
+                }
             }
+        Write-Information "Successfully executed $executedFilesCount migration scripts."        
+    }
+    finally
+    {
+        if ($Connection.State -eq "Open")
+        {
+            $Connection.Dispose()
         }
-    Write-Information "Successfully executed $executedFilesCount migration scripts."
+    }
 }
 
 function Get-PatchHistoryTableName {
@@ -174,7 +198,7 @@ function Test-FileMigrated {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ConnectionString,
+        [Data.SqlClient.SqlConnection]$Connection,
         [Parameter(Mandatory = $true)]
         [string]$FileName
     )
@@ -185,10 +209,10 @@ If Exists (Select * From $script:FullHistoryTableName Where name = @PatchFileNam
 Else
     Select 0 As [Exists]
 "
-    $PatchNameParameter = New-Object System.Data.SqlClient.SqlParameter
+    $PatchNameParameter = New-Object Data.SqlClient.SqlParameter
     $PatchNameParameter.ParameterName = '@PatchFileName'
     $PatchNameParameter.Value = $FileName
-    $fileMigrated = 0 -lt ((Invoke-SQL -ConnectionString $ConnectionString -SqlCommand $SearchCommand -CommandParameters $PatchNameParameter).Exists)
+    $fileMigrated = 0 -lt ((Invoke-SQL -Connection $Connection -SqlCommand $SearchCommand -CommandParameters $PatchNameParameter).Exists)
 
     $fileMigrated
 }
@@ -197,7 +221,7 @@ function Set-FileMigrated {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ConnectionString,
+        [Data.SqlClient.SqlConnection]$Connection,
         [Parameter(Mandatory = $true)]
         [string]$FileName
     )
@@ -206,26 +230,26 @@ If Not Exists (Select * From $script:FullHistoryTableName Where name = @PatchFil
     Insert $script:FullHistoryTableName(name, applied_at)
     Values (@PatchFileName, GetUTCDate())
 "
-    $PatchNameParameter = New-Object System.Data.SqlClient.SqlParameter
+    $PatchNameParameter = New-Object Data.SqlClient.SqlParameter
     $PatchNameParameter.ParameterName = '@PatchFileName'
     $PatchNameParameter.Value = $FileName
-    Invoke-SQL -ConnectionString $ConnectionString -SqlCommand $InsertCommand -CommandParameters $PatchNameParameter
+    Invoke-SQL -Connection $Connection -SqlCommand $InsertCommand -CommandParameters $PatchNameParameter
 }
 
 function Initialize-HistoryTable {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ConnectionString
+        [Data.SqlClient.SqlConnection]$Connection
     )
 
-    $TableSchemaParameter = New-Object System.Data.SqlClient.SqlParameter
+    $TableSchemaParameter = New-Object Data.SqlClient.SqlParameter
     $TableSchemaParameter.ParameterName = '@TableSchema'
     $TableSchemaParameter.Value = $script:DefaultSchema
-    $TableNameParameter = New-Object System.Data.SqlClient.SqlParameter
+    $TableNameParameter = New-Object Data.SqlClient.SqlParameter
     $TableNameParameter.ParameterName = '@TableName'
     $TableNameParameter.Value = $script:HistoryTable
-    $TableExists = (Invoke-SQL -ConnectionString $ConnectionString `
+    $TableExists = (Invoke-SQL -Connection $Connection `
         -SqlCommand "Select Count(*) As [Count] From INFORMATION_SCHEMA.TABLES Where TABLE_SCHEMA = @TableSchema And TABLE_NAME = @TableName" `
         -CommandParameters $TableSchemaParameter, $TableNameParameter ).Count `
             -gt 0
@@ -241,7 +265,7 @@ Create Table $script:FullHistoryTableName (
     Constraint [PK_$script:HistoryTable] Primary Key Clustered ( id ),
     Index [IX_$($script:HistoryTable)_Name] NonClustered (Name)
 )"
-        Invoke-SQL -ConnectionString $ConnectionString -SqlCommand $TableDefinitionCommand
+        Invoke-SQL -Connection $Connection -SqlCommand $TableDefinitionCommand
     }
 }
 
