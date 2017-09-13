@@ -1,6 +1,7 @@
 [string]$script:HistoryTable = $null
 [string]$script:DefaultSchema = $null
 [string]$script:FullHistoryTableName = $null
+[string]$script:CommandTerminator = $null
 [int]$script:DefaultCommandTimeout = $null
 [int]$script:DataMigrationTimeout = $null
 
@@ -10,7 +11,8 @@ function Set-Defaults {
         [string]$PatchHistoryTableName,
         [string]$DatabaseSchema,
         [int]$DefaultCommandTimeout,
-        [int]$DataMigrationTimeout
+        [int]$DataMigrationTimeout,
+        [string]$CommandTerminator
     )
 
     if ($PatchHistoryTableName -ne $null)
@@ -26,6 +28,12 @@ function Set-Defaults {
     }
     $script:FullHistoryTableName = "[$script:DefaultSchema].[$script:HistoryTable]"
     Write-Verbose "Full patch history table name is $script:FullHistoryTableName"
+
+    if ($CommandTerminator -ne $null)
+    {
+        Write-Verbose "Setting command terminator to $CommandTerminator"
+        $script:CommandTerminator = $CommandTerminator
+    }
 
     if ($DefaultCommandTimeout -ne $null)
     {
@@ -97,10 +105,10 @@ function Invoke-SQLFromFile {
         Write-Information "Executing file $FilePath"
         try
         {
-            # split the file in batch commands (separated by GO statements) and run them
+            # split the file in batch commands (separated by command terminator statements) and run them
             foreach ($line in $fileText)
             {
-                if ($line -match '^\s*go\s*$')
+                if ($line -match '^\s*' + $script:CommandTerminator + '\s*$')
                 {
                     # exec
                     Invoke-SQL -ConnectionString $ConnectionString -SqlCommand $batchScript -Timeout $commandExecutionTimeout
@@ -237,4 +245,4 @@ Create Table $script:FullHistoryTableName (
     }
 }
 
-Set-Defaults -PatchHistoryTableName '_patch_history' -DatabaseSchema 'dbo' -DefaultCommandTimeout 60 -DataMigrationTimeout 600
+Set-Defaults -PatchHistoryTableName '_patch_history' -DatabaseSchema 'dbo' -DefaultCommandTimeout 60 -DataMigrationTimeout 600 -CommandTerminator 'go'
