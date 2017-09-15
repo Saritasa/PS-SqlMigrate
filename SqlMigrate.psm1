@@ -65,10 +65,10 @@ function Invoke-SQL {
         $ConnectionString = "$ConnectionString;Connection Timeout=$Timeout";
         $Connection = New-Object Data.SqlClient.SqlConnection($ConnectionString)
     }
-    
+
     try
     {
-        if ($Connection.State -ne [Data.ConnectionState]::Open)
+        if ($Connection.State -ne 'Open')
         {
             $Connection.Open()
         }
@@ -88,10 +88,10 @@ function Invoke-SQL {
     {
         if ($PSCmdlet.ParameterSetName -eq 'ConnectionString')
         {
-            $Connection.Dispose()            
+            $Connection.Dispose()
         }
     }
-    
+
     $dataSet.Tables
 }
 
@@ -106,7 +106,7 @@ function Invoke-SQLFromFile {
     )
     $fileName = (Get-Item $FilePath).BaseName
     $isDataFile = $fileName.EndsWith('.dat')
-    
+
     $fileText = Get-Content $FilePath
     $commandExecutionTimeout = if ($isDataFile) { $script:DataMigrationTimeout } else { $script:DefaultCommandTimeout }
     $batchScript = $null
@@ -163,7 +163,7 @@ function Invoke-MigrationsInFolder {
     {
         $Connection.Open()
         Initialize-HistoryTable -Connection $Connection
-        
+
         $executedFilesCount = 0
         Get-ChildItem $FolderPath -File -Filter *.sql -Recurse:$Recurse |
             Sort-Object $_.Name |
@@ -172,19 +172,22 @@ function Invoke-MigrationsInFolder {
                 $executeScript = !(Test-FileMigrated -Connection $Connection -FileName $fileName)
                 if ($executeScript)
                 {
+                    $ExecutionTimer = [Diagnostics.Stopwatch]::StartNew()
                     Invoke-SQLFromFile -FilePath $_.FullName -Connection $Connection
-                    Set-FileMigrated -Connection $Connection -FileName $fileName
+
+                    Set-FileMigrated -Connection $Connection -FileName $fileName -ExecutionDuration $ExecutionTimer.Elapsed
                     ++$executedFilesCount
                 }
+                else
+                {
+                    Write-Information "Skipped $fileName"
+                }
             }
-        Write-Information "Successfully executed $executedFilesCount migration scripts."        
+        Write-Information "Successfully executed $executedFilesCount migration scripts."
     }
     finally
     {
-        if ($Connection.State -eq "Open")
-        {
-            $Connection.Dispose()
-        }
+        $Connection.Dispose()
     }
 }
 
@@ -221,17 +224,21 @@ function Set-FileMigrated {
         [Parameter(Mandatory = $true)]
         [Data.SqlClient.SqlConnection]$Connection,
         [Parameter(Mandatory = $true)]
-        [string]$FileName
+        [string]$FileName,
+        [TimesPan]$ExecutionDuration
     )
     $InsertCommand = "
 If Not Exists (Select * From $script:FullHistoryTableName Where name = @PatchFileName)
-    Insert $script:FullHistoryTableName(name, applied_at)
-    Values (@PatchFileName, GetUTCDate())
+    Insert $script:FullHistoryTableName(name, applied_at, execution_duration)
+    Values (@PatchFileName, GetUTCDate(), @ExecutionDuration)
 "
     $PatchNameParameter = New-Object Data.SqlClient.SqlParameter
     $PatchNameParameter.ParameterName = '@PatchFileName'
     $PatchNameParameter.Value = $FileName
-    Invoke-SQL -Connection $Connection -SqlCommand $InsertCommand -CommandParameters $PatchNameParameter
+    $ExecutionDurationParameter = New-Object Data.SqlClient.SqlParameter
+    $ExecutionDurationParameter.ParameterName = '@ExecutionDuration'
+    $ExecutionDurationParameter.Value = if ($ExecutionDuration -eq $null) { [DBNull]::Value } else { $ExecutionDuration.Ticks }
+    Invoke-SQL -Connection $Connection -SqlCommand $InsertCommand -CommandParameters $PatchNameParameter, $ExecutionDurationParameter
 }
 
 function Initialize-HistoryTable {
@@ -260,6 +267,7 @@ Create Table $script:FullHistoryTableName (
     id int Not Null Identity(1, 1),
     name varchar(100) Not Null,
     applied_at Datetime2 Not Null,
+    execution_duration bigint Null,
     Constraint [PK_$script:HistoryTable] Primary Key Clustered ( id ),
     Index [IX_$($script:HistoryTable)_Name] NonClustered (Name)
 )"
