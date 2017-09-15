@@ -98,57 +98,54 @@ function Invoke-SQL {
 function Invoke-SQLFromFile {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
+        [Parameter(Mandatory = $true)]
         [ValidateScript({ [IO.File]::Exists((Resolve-Path $_)) })]
-        [string[]]$FilePath,
+        [string]$FilePath,
         [Parameter(Mandatory = $true)]
         [Data.SqlClient.SqlConnection]$Connection
     )
-
-    Process {
-        $fileName = (Get-Item $FilePath).BaseName
-        $isDataFile = $fileName.EndsWith('.dat')
-        
-        $fileText = Get-Content $FilePath
-        $commandExecutionTimeout = if ($isDataFile) { $script:DataMigrationTimeout } else { $script:DefaultCommandTimeout }
-        $batchScript = $null
-        $linePos = 0
-        $lineBlockStart = 0
-        Write-Information "Executing file $FilePath"
-        try
+    $fileName = (Get-Item $FilePath).BaseName
+    $isDataFile = $fileName.EndsWith('.dat')
+    
+    $fileText = Get-Content $FilePath
+    $commandExecutionTimeout = if ($isDataFile) { $script:DataMigrationTimeout } else { $script:DefaultCommandTimeout }
+    $batchScript = $null
+    $linePos = 0
+    $lineBlockStart = 0
+    Write-Information "Executing file $FilePath"
+    try
+    {
+        # split the file in batch commands (separated by command terminator statements) and run them
+        foreach ($line in $fileText)
         {
-            # split the file in batch commands (separated by command terminator statements) and run them
-            foreach ($line in $fileText)
+            if ($line -match '^\s*' + $script:CommandTerminator + '\s*$')
             {
-                if ($line -match '^\s*' + $script:CommandTerminator + '\s*$')
-                {
-                    # exec
-                    Invoke-SQL -Connection $Connection -SqlCommand $batchScript -Timeout $commandExecutionTimeout
-                    $batchScript = $null
-                    $lineBlockStart = $linePos + 1
-                }
-                else
-                {
-                    if ($batchScript -ne $null)
-                    {
-                        $batchScript += "`n"
-                    }
-                    $batchScript += $line
-                }
-
-                ++$linePos
+                # exec
+                Invoke-SQL -Connection $Connection -SqlCommand $batchScript -Timeout $commandExecutionTimeout
+                $batchScript = $null
+                $lineBlockStart = $linePos + 1
             }
-            Invoke-SQL -Connection $Connection -SqlCommand $batchScript -Timeout $commandExecutionTimeout
-            Write-Information "File $FilePath executed successfully"
+            else
+            {
+                if ($batchScript -ne $null)
+                {
+                    $batchScript += "`n"
+                }
+                $batchScript += $line
+            }
+
+            ++$linePos
         }
-        catch [Data.SqlClient.SqlException]
-        {
-            $OccurredException = $_.Exception.InnerException
-            $ExceptionLine = $lineBlockStart + $OccurredException.LineNumber
-            throw "Error executing file $($FilePath):
-            $($OccurredException.Message)
-            At line $ExceptionLine, Error Number: $($OccurredException.Number), State: $($OccurredException.State), Class: $($OccurredException.Class)"
-        }
+        Invoke-SQL -Connection $Connection -SqlCommand $batchScript -Timeout $commandExecutionTimeout
+        Write-Information "File $FilePath executed successfully"
+    }
+    catch [Data.SqlClient.SqlException]
+    {
+        $OccurredException = $_.Exception.InnerException
+        $ExceptionLine = $lineBlockStart + $OccurredException.LineNumber
+        throw "Error executing file $($FilePath):
+        $($OccurredException.Message)
+        At line $ExceptionLine, Error Number: $($OccurredException.Number), State: $($OccurredException.State), Class: $($OccurredException.Class)"
     }
 }
 
@@ -169,6 +166,7 @@ function Invoke-MigrationsInFolder {
         
         $executedFilesCount = 0
         Get-ChildItem $FolderPath -File -Filter *.sql -Recurse:$Recurse |
+            Sort-Object $_.Name |
             ForEach-Object {
                 $fileName = $_.Name
                 $executeScript = !(Test-FileMigrated -Connection $Connection -FileName $fileName)
