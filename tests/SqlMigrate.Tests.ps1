@@ -117,3 +117,35 @@ Describe "Test-FileMigrated" {
     Invoke-SQL -Connection $Connection -sqlCommand "Drop Table $HistoryTable" -ErrorAction SilentlyContinue
     $Connection.Close()        
 }
+
+Describe "Invoke-MigrationsInFolder" {
+    Try { Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Drop Table $HistoryTable" -ErrorAction SilentlyContinue } Catch {}    
+
+    $FilesCalculationsReuslt = -3
+    
+    It "should execute files in folder in alphabetical order regardless of folders they are nested in" {
+        Invoke-MigrationsInFolder -ConnectionString $testDatabaseConnectionString -FolderPath TestScripts/Grouped -Recurse
+
+        $ExecutionResult = (Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Select Top 1 ID As Res From TestData").Res
+        $ExecutionResult | Should Be $FilesCalculationsReuslt
+    }
+
+    It "should not execute the same files twice" {
+        Invoke-MigrationsInFolder -ConnectionString $testDatabaseConnectionString -FolderPath TestScripts/Grouped -Recurse
+        Invoke-MigrationsInFolder -ConnectionString $testDatabaseConnectionString -FolderPath TestScripts/Grouped -Recurse
+
+        (Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Select Count(*) As Res From TestData").Res | Should Be 1
+        (Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Select Top 1 ID As Res From TestData").Res | Should Be $FilesCalculationsReuslt
+    }
+
+    BeforeEach {
+        Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "If Object_ID('dbo.TestData', 'U') Is Not Null Drop Table dbo.TestData;"
+        # clear the patch table
+        Try { Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Delete $HistoryTable" -ErrorAction SilentlyContinue } Catch {}    
+    }
+
+    AfterAll {
+        Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "If Object_ID('dbo.TestData', 'U') Is Not Null Drop Table dbo.TestData;"
+        Invoke-SQL -ConnectionString $testDatabaseConnectionString -sqlCommand "Drop Table $HistoryTable" -ErrorAction SilentlyContinue    
+    }    
+}
