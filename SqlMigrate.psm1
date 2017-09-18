@@ -4,6 +4,8 @@
 [string]$script:CommandTerminator = $null
 [int]$script:DefaultCommandTimeout = $null
 [int]$script:DataMigrationTimeout = $null
+[string]$script:ArtifactNameLinePrefix = '--require:'
+[string]$script:TableNameLinePrefix = '--table:'
 
 function Set-Defaults {
     [CmdletBinding()]
@@ -95,6 +97,60 @@ function Invoke-SQL {
     $dataSet.Tables
 }
 
+function Invoke-BatchSQLFromFile {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$Script,
+        [Parameter(Mandatory = $true)]
+        [Data.SqlClient.SqlConnection]$Connection,
+        [Switch]$UseBCP,
+        [int]$CommandExecutionTimeout
+    )
+
+    $CommandExecuted = $false
+    if ($UseBCP)
+    {
+        $SeparateLines = $Script -split "`n"
+        if ($SeparateLines -gt 1)
+        {
+            $ArtifactLine = $SeparateLines[0].Trim()
+            $TablePrefixLine = $SeparateLines[1].Trim()
+            if ($ArtifactLine.StartsWith($script:ArtifactNameLinePrefix) -and $TablePrefixLine.StartsWith($script:TableNameLinePrefix))
+            {
+                $ArtifactName = $ArtifactLine.Substring($script:ArtifactNameLinePrefix.Length).Trim()
+                $TableName = $TablePrefixLine.Substring($script:TableNameLinePrefix.Length).Trim()
+
+                $CommandExecuted = $true
+                $scriptExecutionResult = Invoke-SQL -Connection $Connection -SqlCommand $Script -Timeout $CommandExecutionTimeout
+                $shouldExecuteBcp = ($scriptExecutionResult.Count -gt 0) -and ($scriptExecutionResult[0].Rows.Count -gt 0)
+                if ($shouldExecuteBcp)
+                {
+                    $ArtifactsTempFolder = Join-Path (Resolve-Path .) /artifacts
+                    $ArtifactFileName = $ArtifactName.Split("/") | Select-Object -Last 1
+                    $LocalFileStoragePath = Join-Path $ArtifactsTempFolder $ArtifactFileName
+
+                    if (!(Test-Path $LocalFileStoragePath))
+                    {
+                        Write-Verbose "Attempt to download $ArtifactName file to $LocalFileStoragePath"
+                        Import-Module BitsTransfer
+                        Start-BitsTransfer -Source $ArtifactName -Destination $LocalFileStoragePath
+                    }
+
+                    Write-Verbose "Starting applying BCP patch to database"
+                    & bcp.exe "$($Connection.Database).$($script:DefaultSchema).$TableName" IN $LocalFileStoragePath -E -n -S -U -P
+                    Write-Information "$LocalFileStoragePath was executed"
+                }
+            }
+        }
+    }
+
+    if (!$CommandExecuted)
+    {
+        Invoke-SQL -Connection $Connection -SqlCommand $Script -Timeout $CommandExecutionTimeout
+    }
+}
+
 function Invoke-SQLFromFile {
     [CmdletBinding()]
     param (
@@ -102,7 +158,8 @@ function Invoke-SQLFromFile {
         [ValidateScript({ [IO.File]::Exists((Resolve-Path $_)) })]
         [string]$FilePath,
         [Parameter(Mandatory = $true)]
-        [Data.SqlClient.SqlConnection]$Connection
+        [Data.SqlClient.SqlConnection]$Connection,
+        [Switch]$UseBCP
     )
     $fileName = (Get-Item $FilePath).BaseName
     $isDataFile = $fileName.EndsWith('.dat')
@@ -121,7 +178,7 @@ function Invoke-SQLFromFile {
             if ($line -match '^\s*' + $script:CommandTerminator + '\s*$')
             {
                 # exec
-                Invoke-SQL -Connection $Connection -SqlCommand $batchScript -Timeout $commandExecutionTimeout
+                Invoke-BatchSQLFromFile -Script $batchScript -Connection $Connection -UseBCP:$UseBCP -CommandExecutionTimeout $commandExecutionTimeout
                 $batchScript = $null
                 $lineBlockStart = $linePos + 1
             }
@@ -136,7 +193,7 @@ function Invoke-SQLFromFile {
 
             ++$linePos
         }
-        Invoke-SQL -Connection $Connection -SqlCommand $batchScript -Timeout $commandExecutionTimeout
+        Invoke-BatchSQLFromFile -Script $batchScript -Connection $Connection -UseBCP:$UseBCP -CommandExecutionTimeout $commandExecutionTimeout
         Write-Information "File $FilePath executed successfully"
     }
     catch [Data.SqlClient.SqlException]
@@ -155,7 +212,8 @@ function Invoke-MigrationsInFolder {
         [Parameter(Mandatory = $true)]
         [string]$ConnectionString,
         [string]$FolderPath,
-        [switch]$Recurse
+        [switch]$Recurse,
+        [Switch]$UseBCP
     )
 
     $Connection = New-Object Data.SqlClient.SqlConnection($ConnectionString)
